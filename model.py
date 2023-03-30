@@ -8,9 +8,8 @@ import torch.nn.functional as F
 
 
 class OCCI(nn.Module):
-  def __init__(self, batch_size, num_slots, slot_size, Nc, Np, use_imagine):
+  def __init__(self, num_slots, slot_size, Nc, Np, use_imagine):
     super().__init__()
-    self.batch_size = batch_size
     self.num_slots = num_slots
     self.slot_size = slot_size
     self.Nc = Nc
@@ -19,9 +18,9 @@ class OCCI(nn.Module):
     self.im_size = int(math.sqrt(self.slot_size))
     self.slt_attn = SlotAttention(5, self.num_slots, self.slot_size, 256).double()
     
-    self.ctrl = Controller(self.num_slots, self.slot_size, self.slt_attn, self.batch_size)
-    self.exec = Executor(self.slot_size * 2, self.batch_size, self.Nc, self.Np)
-    self.dec = Decoder(self.batch_size, self.im_size, self.num_slots)
+    self.ctrl = Controller(self.num_slots, self.slot_size, self.slt_attn)
+    self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
+    self.dec = Decoder(self.im_size, self.num_slots)
 
 
   def forward(self, samples):
@@ -30,6 +29,8 @@ class OCCI(nn.Module):
     query_i = samples['query_i']
     query_o = samples['query_o']
 
+    batch_size = train_i.shape[0]
+    
     # breakpoint()
     inst_embed, slots_i, slots_o = self.ctrl(train_i, train_o)
     H_query = self.slt_attn(query_i)
@@ -62,8 +63,8 @@ class OCCI(nn.Module):
       
       z_im, _, _ = self.ctrl(train_i, im_train_o)
       c_prob, p_prob = self.exec.selection(z_im, get_prob=True)
-      c_tar = torch.tensor(ic).expand(self.batch_size)
-      p_tar = torch.tensor(ip).expand(self.batch_size)
+      c_tar = torch.tensor(ic).expand(batch_size)
+      p_tar = torch.tensor(ip).expand(batch_size)
       L_im = ce_loss(c_prob, c_tar) + ce_loss(p_prob, p_tar)
 
       L_total = L_im + L_rec
@@ -149,13 +150,12 @@ class SlotAttention(nn.Module):
 
       
 class Controller(nn.Module):
-  def __init__(self, slot_num, slot_size, slot_module, batch_size):
+  def __init__(self, slot_num, slot_size, slot_module):
     super().__init__()
     self.slot_num = slot_num
     self.slot_size = slot_size
     self.slot_module = slot_module
     self.h_size = 2 * self.slot_size
-    self.batch_size = batch_size
        
     self.importn = ops.MLP(self.h_size * self.slot_num, [self.h_size * self.slot_num], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.contrib = ops.MLP(self.h_size * self.slot_num, [self.h_size * self.slot_num], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
@@ -163,7 +163,7 @@ class Controller(nn.Module):
     # self.importn = ops.MLP(self.h_size, [512, self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     # self.contrib = ops.MLP(self.h_size, [512, self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
-    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=batch_size)
+    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=8)
     self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
     
   def forward(self, input, output):
@@ -171,18 +171,19 @@ class Controller(nn.Module):
       slots_i = self.slot_module(input)
       slots_o = self.slot_module(output)
       
+      batch_size = slots_i.shape[0]
       # concatenate io slots for MLP
       # shape of [batch_size, num_slot, 2*slot_size]
       slot_pairs = torch.cat((slots_i, slots_o), -1).float()
       # w = self.importn(slot_pairs)
       # h = self.contrib(slot_pairs)
       
-      w = self.importn(slot_pairs.reshape(self.batch_size, -1))
-      h = self.contrib(slot_pairs.reshape(self.batch_size, -1))
+      w = self.importn(slot_pairs.reshape(batch_size, -1))
+      h = self.contrib(slot_pairs.reshape(batch_size, -1))
       
       # for batch matrix mul
       dot = w * h
-      dot = dot.reshape(self.batch_size, self.slot_num, -1)
+      dot = dot.reshape(batch_size, self.slot_num, -1)
       _inst_embed = torch.sum(dot, dim=1)
       inst_embed = self.encoder(_inst_embed)
       
@@ -190,7 +191,7 @@ class Controller(nn.Module):
 
 
 class Executor(nn.Module):
-  def __init__(self, p, batch_size, Nc, Np):
+  def __init__(self, p, Nc, Np):
     super().__init__()
     self.p = p
     self.fc = ops.MLP(self.p, [self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
@@ -199,10 +200,10 @@ class Executor(nn.Module):
     self.scale = math.sqrt(self.p)
     self.Nc = Nc
     self.Np = Np
-    self.Kc = torch.randn(self.Nc, self.p).expand(batch_size, -1, -1)
-    self.Vc = torch.randn(self.Nc, self.p).expand(batch_size, -1, -1)
-    self.Kp = torch.randn(self.Np, self.p).expand(batch_size, -1, -1)
-    self.Vp = torch.randn(self.Np, self.p).expand(batch_size, -1, -1)
+    self.Kc = torch.randn(self.Nc, self.p)
+    self.Vc = torch.randn(self.Nc, self.p)
+    self.Kp = torch.randn(self.Np, self.p)
+    self.Vp = torch.randn(self.Np, self.p)
     
     self.pres = ops.MLP(int(self.p * 3/2), [1024, 512, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.up   = ops.MLP(int(self.p * 3/2), [1024, 512, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
@@ -213,10 +214,10 @@ class Executor(nn.Module):
     Qc = self.fc(inst_embed)
     Qp = self.fp(inst_embed)
     
-    c_prob = torch.einsum('bi, bci->bc', Qc, self.Kc) / self.scale
-    p_prob = torch.einsum('bi, bpi->bp', Qp, self.Kp) / self.scale
-    c = torch.einsum('bc,bci->bi', F.softmax(c_prob, dim=-1), self.Vc)
-    p = torch.einsum('bp,bpi->bi', F.softmax(p_prob, dim=-1), self.Vp)
+    c_prob = torch.einsum('bi, ci->bc', Qc, self.Kc) / self.scale
+    p_prob = torch.einsum('bi, pi->bp', Qp, self.Kp) / self.scale
+    c = torch.einsum('bc,ci->bi', F.softmax(c_prob, dim=-1), self.Vc)
+    p = torch.einsum('bp,pi->bi', F.softmax(p_prob, dim=-1), self.Vp)
     
     if get_prob:
       return c_prob, p_prob
@@ -236,10 +237,9 @@ class Executor(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, batch_size, im_size, slot_num):
+    def __init__(self, im_size, slot_num):
       super().__init__()
       self.im_size = im_size
-      self.batch_size = batch_size
       
       x = torch.linspace(-1, 1, self.im_size)
       y = torch.linspace(-1, 1, self.im_size)
@@ -254,9 +254,10 @@ class Decoder(nn.Module):
                                        kernel_size=3, padding=1)
     
     def sb_decode(self, slots):
+        batch_size = slots.shape[0]
         z = slots.view(slots.shape[0], slots.shape[1], self.im_size, self.im_size)
-        z = torch.cat((self.x_grid.expand(self.batch_size, 1, -1, -1),
-                       self.y_grid.expand(self.batch_size, 1, -1, -1), z), dim=1)
+        z = torch.cat((self.x_grid.expand(batch_size, 1, -1, -1),
+                       self.y_grid.expand(batch_size, 1, -1, -1), z), dim=1)
 
         for module in self.dec_convs:
             z = F.relu(module(z))
