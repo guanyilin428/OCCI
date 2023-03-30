@@ -12,7 +12,7 @@ writer = SummaryWriter()
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
-batch_size = 8
+batch_size = 32
 im_size = 20
 model = OCCI(batch_size=batch_size, num_slots=3, slot_size=data_load.const_len, Nc=26, Np=4, use_imagine=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)

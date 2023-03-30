@@ -104,7 +104,7 @@ class ArcDataset(Dataset):
         return sample
 
 train_dataset = ArcDataset(preprocess(train_tasks, im_size))
-data_loader = DataLoader(train_dataset, batch_size = 8, shuffle = True, drop_last = True)
+data_loader = DataLoader(train_dataset, batch_size = 32, shuffle = True, drop_last = True)
 
 eval_dataset = ArcDataset(preprocess(train_tasks, im_size))
-eval_loader = DataLoader(eval_dataset, batch_size = 8, shuffle = False, drop_last = True)
+eval_loader = DataLoader(eval_dataset, batch_size = 32, shuffle = False, drop_last = True)
