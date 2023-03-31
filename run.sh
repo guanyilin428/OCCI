@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH -J occi-300ep                  # The job name
-#SBATCH -o ret_300ep_rec.out           # Write the standard output to file named 'ret.out'
-#SBATCH -e ret_300ep_rec.err           # Write the standard error to file named 'ret.err'
+#SBATCH -J occi-new                    # The job name
+#SBATCH -o ret_300ep_new.out           # Write the standard output to file named 'ret.out'
+#SBATCH -e ret_300ep_new.err           # Write the standard error to file named 'ret.err'
 
 #- Resources
 

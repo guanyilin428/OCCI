@@ -7,12 +7,12 @@ import numpy as np
 from model import OCCI
 from torch.utils.tensorboard import SummaryWriter
 
-        
-writer = SummaryWriter()
+
+writer = SummaryWriter('./logs/new_grad')
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
-batch_size = 32
+batch_size = 16
 im_size = 20
 model = OCCI(num_slots=3, slot_size=data_load.const_len, Nc=26, Np=4, use_imagine=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -78,7 +78,7 @@ for epoch in range(300):
     
     ''' add checkpoint '''
     if epoch % 50 == 49:
-        model_path = Path('./trained_occi_300ep_{}.pth'.format(int(epoch/50)))
+        model_path = Path('./trained_occi_new_grad_{}.pth'.format(int(epoch/50)))
         torch.save(model.state_dict(), model_path)
         
 writer.close()    

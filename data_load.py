@@ -6,15 +6,13 @@ import numpy as np
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 
-import IPython
-
-# data_path = Path('data')
+# data_path = Path('new')
 
 # train_path = data_path / 'training'
 # eval_path  = data_path / 'evaluation'
 
-train_path = Path('mimg')
-eval_path = Path('eval')
+train_path = Path('new/train')
+eval_path = Path('new/test')
 
 train_tasks = {task.stem: json.load(task.open()) for task in train_path.iterdir()}
 eval_tasks = {task.stem: json.load(task.open()) for task in eval_path.iterdir()}
@@ -104,7 +102,7 @@ class ArcDataset(Dataset):
         return sample
 
 train_dataset = ArcDataset(preprocess(train_tasks, im_size))
-data_loader = DataLoader(train_dataset, batch_size = 32, shuffle = True, drop_last = False)
+data_loader = DataLoader(train_dataset, batch_size = 16, shuffle = True, drop_last = False)
 
-eval_dataset = ArcDataset(preprocess(train_tasks, im_size))
-eval_loader = DataLoader(eval_dataset, batch_size = 32, shuffle = False, drop_last = False)
+eval_dataset = ArcDataset(preprocess(eval_tasks, im_size))
+eval_loader = DataLoader(eval_dataset, batch_size = 16, shuffle = False, drop_last = False)

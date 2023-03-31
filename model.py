@@ -201,10 +201,10 @@ class Executor(nn.Module):
     self.scale = math.sqrt(self.p)
     self.Nc = Nc
     self.Np = Np
-    self.Kc = torch.randn(self.Nc, self.p)
-    self.Vc = torch.randn(self.Nc, self.p)
-    self.Kp = torch.randn(self.Np, self.p)
-    self.Vp = torch.randn(self.Np, self.p)
+    self.Kc = torch.randn(self.Nc, self.p, requires_grad=True)
+    self.Vc = torch.randn(self.Nc, self.p, requires_grad=True)
+    self.Kp = torch.randn(self.Np, self.p, requires_grad=True)
+    self.Vp = torch.randn(self.Np, self.p, requires_grad=True)
     
     self.pres = ops.MLP(int(self.p * 3/2), [1024, 512, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.up   = ops.MLP(int(self.p * 3/2), [1024, 512, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
