@@ -22,6 +22,8 @@ class OCCI(nn.Module):
     self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
     self.dec = Decoder(self.im_size, self.num_slots)
 
+    self.ce_loss = nn.CrossEntropyLoss()
+
 
   def forward(self, samples):
     train_i = samples['input']
@@ -44,10 +46,9 @@ class OCCI(nn.Module):
     out_img = pred_out.permute(0,2,3,1).reshape(-1,10)
 
     # calculate Loss of reconstruction
-    ce_loss = nn.CrossEntropyLoss()
     query_o = query_o.flatten().type(torch.LongTensor)
 
-    L_rec = ce_loss(out_img, query_o)
+    L_rec = self.ce_loss(out_img, query_o)
     L_total = L_rec
     
     # imagination
@@ -65,7 +66,7 @@ class OCCI(nn.Module):
       c_prob, p_prob = self.exec.selection(z_im, get_prob=True)
       c_tar = torch.tensor(ic).expand(batch_size)
       p_tar = torch.tensor(ip).expand(batch_size)
-      L_im = ce_loss(c_prob, c_tar) + ce_loss(p_prob, p_tar)
+      L_im = self.ce_loss(c_prob, c_tar) + self.ce_loss(p_prob, p_tar)
 
       L_total = L_im + L_rec
       
