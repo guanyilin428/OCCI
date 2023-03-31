@@ -27,13 +27,18 @@ def evaluate(model):
     with torch.no_grad():
         tot_num = 0
         hit_num = 0
+        tot_L_test = torch.tensor(0.0) 
         for idx, samples in enumerate(test_loader):
             L_test, pred_out  = model(samples)
+
+            tot_L_test += L_test
             
             test_step += 1
-            writer.add_scalar('loss/test', L_test, test_step)
-            print(f"loss/test: {L_test:>7f}")
-            query_out = samples['query_o'].reshape(batch_size, 1, im_size, im_size).numpy()      
+            # writer.add_scalar('loss/test', L_test, test_step)
+            # print(f"loss/test: {L_test:>7f}")
+            # query_out = samples['query_o'].reshape(batch_size, 1, im_size, im_size).numpy()      
+            query_out = samples['query_o'].reshape(-1, 1, im_size, im_size).numpy()      
+            batch_size = query_out.shape[0]
             for i in range(batch_size):
                 # process prediction
                 pred = pred_out[i]
@@ -44,9 +49,10 @@ def evaluate(model):
                     hit_num += 1
                 tot_num += 1
         acc = hit_num / tot_num
+        L_test = tot_L_test / tot_num
         
     model.train()
-    return acc
+    return acc, L_test
 
 
 for epoch in range(300):
@@ -62,10 +68,13 @@ for epoch in range(300):
         optimizer.step()
         train_step += 1
         writer.add_scalar('loss/train', L_tot, train_step)
-        print(f"loss/test: {L_tot:>7f}")
+        # print(f"loss/test: {L_tot:>7f}")
         
-    acc = evaluate(model)
-    writer.add_scalar('acc/test', acc, epoch)
+        acc, L_test = evaluate(model)
+        # writer.add_scalar('acc/test', acc, epoch)
+        writer.add_scalar('acc/test', acc, train_step)
+        writer.add_scalar('loss/test', L_test, train_step)
+        print(f"loss/test: {L_test:>7f}")
     
     ''' add checkpoint '''
     if epoch % 50 == 49:
