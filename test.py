@@ -8,13 +8,13 @@ from model import OCCI
 from torch.utils.tensorboard import SummaryWriter
 
 
-writer = SummaryWriter('./logs/new_grad')
+writer = SummaryWriter('./logs/slsz400')
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
 batch_size = 16
 im_size = 20
-model = OCCI(num_slots=3, slot_size=data_load.const_len, Nc=26, Np=4, use_imagine=False)
+model = OCCI(num_slots=3, slot_size=400, Nc=26, Np=4, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 train_step = 0
@@ -77,8 +77,8 @@ for epoch in range(300):
         print(f"loss/test: {L_test:>7f}")
     
     ''' add checkpoint '''
-    if epoch % 50 == 49:
-        model_path = Path('./trained_occi_new_grad_{}.pth'.format(int(epoch/50)))
+    if epoch % 100 == 99:
+        model_path = Path('./trained_occi_slsz400_{}.pth'.format(int(epoch/50)))
         torch.save(model.state_dict(), model_path)
         
 writer.close()    
