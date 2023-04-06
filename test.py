@@ -14,7 +14,7 @@ test_loader = data_load.eval_loader
 
 batch_size = 16
 im_size = 20
-model = OCCI(num_slots=3, slot_size=400, Nc=26, Np=4, use_imagine=False, im_size=im_size)
+model = OCCI(slot_num=3, slot_size=400, Nc=26, Np=4, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 train_step = 0

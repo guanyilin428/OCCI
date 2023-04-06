@@ -9,23 +9,23 @@ import torch.nn.functional as F
 
 
 class OCCI(nn.Module):
-  def __init__(self, num_slots, slot_size, Nc, Np, use_imagine, im_size):
+  def __init__(self, slot_num, slot_size, Nc, Np, use_imagine, im_size):
     super().__init__()
-    self.num_slots = num_slots
+    self.slot_num = slot_num
     self.slot_size = slot_size
     self.Nc = Nc
     self.Np = Np
     self.use_imagine = use_imagine
     self.im_size = im_size
-    self.slt_attn = SlotAttention(5, self.num_slots, self.slot_size, 256).double()
+    self.slt_attn = SlotAttention(5, self.slot_num, self.slot_size, 256).double()
     
     self.conv = nn.Sequential(
         nn.Conv2d(in_channels=1, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
         nn.ReLU()
         )
-    self.ctrl = Controller(self.num_slots, self.slot_size, self.slt_attn)
+    self.ctrl = Controller(self.slot_num, self.slot_size, self.slt_attn)
     self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
-    self.dec = Decoder(self.im_size, self.num_slots)
+    self.dec = Decoder(self.im_size, self.slot_size)
 
     self.ce_loss = nn.CrossEntropyLoss()
 
@@ -50,10 +50,13 @@ class OCCI(nn.Module):
     
     c, p = self.exec.selection(inst_embed, get_prob=False)
     # H_update is of shape [batch_size, num_slot, slot_size]
-    # can be view as [batch_size, channels, height, width]
     H_update = self.exec.update(H_query, c, p)
-    
-    pred_out = self.dec.sb_decode(H_update.float())
+
+    pred_out = None
+    for i in range(self.slot_num):
+      pred = self.dec.sb_decode(H_update[:,i,:].float())
+      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
+      
     out_img = pred_out.permute(0,2,3,1).reshape(-1,10)
 
     # calculate Loss of reconstruction
@@ -87,19 +90,19 @@ class OCCI(nn.Module):
 class SlotAttention(nn.Module):
   """Slot Attention module."""
 
-  def __init__(self, num_iterations, num_slots, slot_size, mlp_hidden_size,
+  def __init__(self, num_iterations, slot_num, slot_size, mlp_hidden_size,
                epsilon=1e-8):
     """Builds the Slot Attention module.
     Args:
       num_iterations: Number of iterations.
-      num_slots: Number of slots.
+      slot_num: Number of slots.
       slot_size: Dimensionality of slot feature vectors.
       mlp_hidden_size: Hidden layer size of MLP.
       epsilon: Offset for attention coefficients before normalization.
     """
     super().__init__()
     self.num_iterations = num_iterations
-    self.num_slots = num_slots
+    self.slot_num = slot_num
     self.slot_size = slot_size
     self.mlp_hidden_size = max(mlp_hidden_size, slot_size)
     self.epsilon = epsilon
@@ -124,10 +127,10 @@ class SlotAttention(nn.Module):
     self.norm_slots = nn.LayerNorm(slot_size)
     self.norm_pre_ff = nn.LayerNorm(slot_size)
 
-  def forward(self, inputs, num_slots=None):
+  def forward(self, inputs, slot_num=None):
     # `inputs` has shape [batch_size, inputs_size].
     b, n, d, device, dtype = *inputs.shape, inputs.device, inputs.dtype
-    n_s = num_slots if num_slots is not None else self.num_slots
+    n_s = slot_num if slot_num is not None else self.slot_num
     mu = self.slots_mu.expand(b, n_s, -1)
     sigma = self.slots_log_sigma.exp().expand(b, n_s, -1)
     
@@ -259,7 +262,7 @@ class Executor(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, im_size, slot_num):
+    def __init__(self, im_size, slot_size):
       super().__init__()
       self.im_size = im_size
       
@@ -267,7 +270,7 @@ class Decoder(nn.Module):
       y = torch.linspace(-1, 1, self.im_size)
       self.x_grid, self.y_grid = torch.meshgrid(x, y)
       
-      dec_convs = [nn.Conv2d(in_channels=slot_num+2, out_channels=64,
+      dec_convs = [nn.Conv2d(in_channels=slot_size+2, out_channels=64,
                                    kernel_size=3, padding=1),
                    nn.Conv2d(in_channels=64, out_channels=64,
                             kernel_size=3, padding=1)]
@@ -277,7 +280,10 @@ class Decoder(nn.Module):
     
     def sb_decode(self, slots):
         batch_size = slots.shape[0]
-        z = slots.view(slots.shape[0], slots.shape[1], self.im_size, self.im_size)
+        z = slots.view(slots.shape + (1, 1))
+        
+        # NxDx20x20
+        z = z.expand(-1, -1, self.im_size, self.im_size)
         
         z = torch.cat((self.x_grid.expand(batch_size, 1, -1, -1),
                        self.y_grid.expand(batch_size, 1, -1, -1), z), dim=1)
