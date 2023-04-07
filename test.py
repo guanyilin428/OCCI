@@ -8,13 +8,13 @@ from model import OCCI
 from torch.utils.tensorboard import SummaryWriter
 
 
-writer = SummaryWriter('./logs/slsz400')
+writer = SummaryWriter('./logs/sz32')
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
 batch_size = 16
 im_size = 20
-model = OCCI(slot_num=3, slot_size=400, Nc=26, Np=4, use_imagine=False, im_size=im_size)
+model = OCCI(slot_num=3, slot_size=32, Nc=26, Np=4, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 train_step = 0
@@ -55,31 +55,46 @@ def evaluate(model):
     return acc, L_test
 
 
-for epoch in range(300):
+for epoch in range(600):
     print('Epoch {:d}'.format(epoch + 1))
     # if epoch == 200:
     #   optimizer.lr = 0.0001
         # model.use_imagine = True
+    tot_num = 0
+    hit_num = 0
+    
     for batch_idx, batched_samples in enumerate(train_loader):
-        L_tot, _ = model(batched_samples)
+        L_tot, pred_out = model(batched_samples)
         
         optimizer.zero_grad()
         L_tot.backward()
         optimizer.step()
         train_step += 1
         writer.add_scalar('loss/train', L_tot, train_step)
-        # print(f"loss/test: {L_tot:>7f}")
+        
+        query_out = batched_samples['query_o'].reshape(-1, 1, im_size, im_size).numpy()      
+        batch_size = query_out.shape[0]
+        for i in range(batch_size):
+            # process prediction
+            pred = pred_out[i]
+            pred_img = np.argmax(pred.detach().numpy(), axis=0)
+            
+            query_img = query_out[i][0]
+            if (pred_img == query_img).all():
+                hit_num += 1
+            tot_num += 1
         
         acc, L_test = evaluate(model)
         # writer.add_scalar('acc/test', acc, epoch)
         writer.add_scalar('acc/test', acc, train_step)
         writer.add_scalar('loss/test', L_test, train_step)
         print(f"loss/test: {L_test:>7f}")
-    
-    ''' add checkpoint '''
-    if epoch % 100 == 99:
-        model_path = Path('./trained_occi_slsz400_{}.pth'.format(int(epoch/50)))
-        torch.save(model.state_dict(), model_path)
+    train_acc = hit_num / tot_num
+    writer.add_scalar('acc/train', train_acc, epoch)
         
+    ''' add checkpoint
+    if epoch % 100 == 99:
+        model_path = Path('./trained_occi_try_{}.pth'.format(int(epoch/50)))
+        torch.save(model.state_dict(), model_path)
+    '''
 writer.close()    
-

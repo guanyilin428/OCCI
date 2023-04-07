@@ -27,7 +27,9 @@ class OCCI(nn.Module):
     self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
     self.dec = Decoder(self.im_size, self.slot_size)
 
-    self.ce_loss = nn.CrossEntropyLoss()
+    self.softmax = nn.Softmax(dim=1)
+    self.ce_loss = nn.NLLLoss()
+    # self.ce_loss = nn.CrossEntropyLoss()
 
 
   def forward(self, samples):
@@ -52,16 +54,23 @@ class OCCI(nn.Module):
     # H_update is of shape [batch_size, num_slot, slot_size]
     H_update = self.exec.update(H_query, c, p)
 
+    # pred_out shape is [b, out_channel, im_size, im_size]
     pred_out = None
     for i in range(self.slot_num):
       pred = self.dec.sb_decode(H_update[:,i,:].float())
       pred_out = pred if pred_out is None else torch.add(pred, pred_out)
       
+    # cat zero background
+    zero_bg = torch.ones(batch_size, 1, self.im_size, self.im_size) * 0.35
+    pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
+    pred_out = torch.log(pred_out + 1e-20)
+    
     out_img = pred_out.permute(0,2,3,1).reshape(-1,10)
 
     # calculate Loss of reconstruction
     query_o = query_o.flatten().type(torch.LongTensor)
 
+    # L_rec = self.ce_loss(out_img, query_o)
     L_rec = self.ce_loss(out_img, query_o)
     L_total = L_rec
     
@@ -275,7 +284,7 @@ class Decoder(nn.Module):
                    nn.Conv2d(in_channels=64, out_channels=64,
                             kernel_size=3, padding=1)]
       self.dec_convs = nn.ModuleList(dec_convs)
-      self.last_conv = nn.Conv2d(in_channels=64, out_channels=10,
+      self.last_conv = nn.Conv2d(in_channels=64, out_channels=9,
                                        kernel_size=3, padding=1)
     
     def sb_decode(self, slots):
