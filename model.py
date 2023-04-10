@@ -6,22 +6,27 @@ import torch.nn as nn
 from torch.nn import init
 from torchvision import ops
 import torch.nn.functional as F
+import numpy as np
+from einops import rearrange, repeat
 
 
 class OCCI(nn.Module):
-  def __init__(self, slot_num, slot_size, Nc, Np, use_imagine, im_size):
+  def __init__(self, slot_num, slot_size, Nc, Np, num_iterations, mlp_hidden_size, use_imagine, im_size):
     super().__init__()
+    self.num_iterations = num_iterations
+    self.mlp_hidden_size = mlp_hidden_size
     self.slot_num = slot_num
     self.slot_size = slot_size
     self.Nc = Nc
     self.Np = Np
     self.use_imagine = use_imagine
     self.im_size = im_size
-    self.slt_attn = SlotAttention(5, self.slot_num, self.slot_size, 256).double()
+    self.slt_attn = SlotAttention(self.num_iterations, self.slot_num, self.slot_size, self.mlp_hidden_size).double()
     
     self.conv = nn.Sequential(
         nn.Conv2d(in_channels=1, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
-        nn.ReLU()
+        nn.ReLU(),
+        nn.Conv2d(in_channels=slot_size, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
         )
     self.ctrl = Controller(self.slot_num, self.slot_size, self.slt_attn)
     self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
@@ -29,7 +34,7 @@ class OCCI(nn.Module):
 
     self.softmax = nn.Softmax(dim=1)
     self.ce_loss = nn.NLLLoss()
-    # self.ce_loss = nn.CrossEntropyLoss()
+    self.ce_loss = nn.CrossEntropyLoss()
 
 
   def forward(self, samples):
@@ -37,16 +42,21 @@ class OCCI(nn.Module):
     train_o = samples['output'][:,None,:,:]
     query_i = samples['query_i'][:,None,:,:]
     query_o = samples['query_o']
+    print(train_i.shape)
 
     batch_size = train_i.shape[0]
     
+    print(query_i.shape)
+    query_i = rearrange(query_i, 'b c n (s s) -> (b n) c s s')
     # shape as [batch_size, slot_size, io_num, flatten_im_size]
     train_i = self.conv(train_i.float())
     train_o = self.conv(train_o.float())
     query_i = self.conv(query_i.float())
+    print(train_i.shape)
         
     inst_embed, slots_i, slots_o = self.ctrl(train_i, train_o)
     
+    # print(query_i.shape)
     q_i = einops.rearrange(query_i[:,:,0,:], 'b d n->b n d')
     H_query = self.slt_attn(q_i)
     
@@ -56,16 +66,19 @@ class OCCI(nn.Module):
 
     # pred_out shape is [b, out_channel, im_size, im_size]
     pred_out = None
-    for i in range(self.slot_num):
-      pred = self.dec.sb_decode(H_update[:,i,:].float())
-      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
-      
-    # cat zero background
-    zero_bg = torch.ones(batch_size, 1, self.im_size, self.im_size) * 0.35
-    pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
-    pred_out = torch.log(pred_out + 1e-20)
+    # H_update = H_update.sum(dim=1)
+    H_update = H_update.reshape(batch_size, -1)
+    pred_out = self.dec.sb_decode(H_update.float())
+#    for i in range(self.slot_num):
+#      pred = self.dec.sb_decode(H_update[:,i,:].float())
+#      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
+#      
+#    # cat zero background
+#    zero_bg = torch.ones(batch_size, 1, self.im_size, self.im_size) * 0.35
+#    pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
+#    pred_out = torch.log(pred_out + 1e-20)
     
-    out_img = pred_out.permute(0,2,3,1).reshape(-1,10)
+    out_img = pred_out.permute(0,2,3,1).contiguous().reshape(-1,10)
 
     # calculate Loss of reconstruction
     query_o = query_o.flatten().type(torch.LongTensor)
@@ -186,7 +199,7 @@ class Controller(nn.Module):
     self.importn = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.contrib = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
-    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=8)
+    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=2)
     self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
     
   def forward(self, input, output):
@@ -279,12 +292,12 @@ class Decoder(nn.Module):
       y = torch.linspace(-1, 1, self.im_size)
       self.x_grid, self.y_grid = torch.meshgrid(x, y)
       
-      dec_convs = [nn.Conv2d(in_channels=slot_size+2, out_channels=64,
+      dec_convs = [nn.Conv2d(in_channels=slot_size*3+2, out_channels=slot_size,
                                    kernel_size=3, padding=1),
-                   nn.Conv2d(in_channels=64, out_channels=64,
+                   nn.Conv2d(in_channels=slot_size, out_channels=64,
                             kernel_size=3, padding=1)]
       self.dec_convs = nn.ModuleList(dec_convs)
-      self.last_conv = nn.Conv2d(in_channels=64, out_channels=9,
+      self.last_conv = nn.Conv2d(in_channels=64, out_channels=10,
                                        kernel_size=3, padding=1)
     
     def sb_decode(self, slots):
@@ -293,6 +306,13 @@ class Decoder(nn.Module):
         
         # NxDx20x20
         z = z.expand(-1, -1, self.im_size, self.im_size)
+        #print(self.x_grid)
+        #print(self.x_grid.shape)
+        #x = self.x_grid.reshape(self.im_size, self.im_size, 1)
+        #y = self.y_grid.reshape(self.im_size, self.im_size, 1)
+        #xy = np.concatenate((x,y), axis=-1)
+        #xy_tiled = torch.from_numpy(np.tile(xy, (batch_size, 1, 1, 1)).astype(np.float32))
+        #print(xy_tiled.shape)
         
         z = torch.cat((self.x_grid.expand(batch_size, 1, -1, -1),
                        self.y_grid.expand(batch_size, 1, -1, -1), z), dim=1)
