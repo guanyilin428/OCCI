@@ -38,22 +38,21 @@ class OCCI(nn.Module):
 
 
   def forward(self, samples):
-    train_i = samples['input'][:,None,:,:]    
-    train_o = samples['output'][:,None,:,:]
-    query_i = samples['query_i'][:,None,:,:]
+    batch_size = samples['input'].shape[0]
+    
+    train_i = einops.rearrange(samples['input'][:,None,:,:,:], 'b d i h w->(b i) d h w') 
+    train_o = einops.rearrange(samples['output'][:,None,:,:,:], 'b d i h w->(b i) d h w')
+    query_i = einops.rearrange(samples['query_i'][:,None,:,:,:], 'b d i h w->(b i) d h w')
     query_o = samples['query_o']
     print(train_i.shape)
 
-    batch_size = train_i.shape[0]
-    
-    print(query_i.shape)
-    query_i = rearrange(query_i, 'b c n (s s) -> (b n) c s s')
-    # shape as [batch_size, slot_size, io_num, flatten_im_size]
-    train_i = self.conv(train_i.float())
-    train_o = self.conv(train_o.float())
-    query_i = self.conv(query_i.float())
-    print(train_i.shape)
         
+    breakpoint()
+    # shape as [batch_size, slot_size, io_num, flatten_im_size]
+    train_i = einops.rearrange(self.conv(train_i.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
+    train_o = einops.rearrange(self.conv(train_o.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
+    query_i = einops.rearrange(self.conv(query_i.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
+    
     inst_embed, slots_i, slots_o = self.ctrl(train_i, train_o)
     
     # print(query_i.shape)
@@ -199,7 +198,7 @@ class Controller(nn.Module):
     self.importn = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.contrib = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
-    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=2)
+    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=4)
     self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
     
   def forward(self, input, output):

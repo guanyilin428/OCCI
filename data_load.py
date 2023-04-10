@@ -57,8 +57,8 @@ def preprocess(origin_tasks, im_size):
             inp = padding_zeros(np.asarray(item['input']), im_size)
             out = padding_zeros(np.asarray(item['output']), im_size)
                 
-            inp = inp.flatten()
-            out = out.flatten()
+            # inp = inp.flatten()
+            # out = out.flatten()
             
             inp = torch.DoubleTensor(inp)[None,:]
             out = torch.DoubleTensor(out)[None,:]
@@ -77,8 +77,8 @@ def preprocess(origin_tasks, im_size):
         # process query io
         query_i = padding_zeros(np.asarray(task['test'][0]['input']), im_size)
         query_o = padding_zeros(np.asarray(task['test'][0]['output']), im_size)
-        query_i = query_i.flatten()
-        query_o = query_o.flatten()
+        # query_i = query_i.flatten()
+        # query_o = query_o.flatten()
         
         query_i = torch.DoubleTensor(query_i)[None,:]
         query_o = torch.DoubleTensor(query_o)[None,:]
