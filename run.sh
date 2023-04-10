@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH -J occi-slsz400              # The job name
-#SBATCH -o ret_slsz400.out           # Write the standard output to file named 'ret.out'
-#SBATCH -e ret_slsz400.err           # Write the standard error to file named 'ret.err'
+#SBATCH -J occi-inst              # The job name
+#SBATCH -o ret_inst.out           # Write the standard output to file named 'ret.out'
+#SBATCH -e ret_inst.err           # Write the standard error to file named 'ret.err'
 
 #- Resources
 

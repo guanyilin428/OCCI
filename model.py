@@ -17,7 +17,7 @@ class OCCI(nn.Module):
     self.Np = Np
     self.use_imagine = use_imagine
     self.im_size = im_size
-    self.slt_attn = SlotAttention(5, self.slot_num, self.slot_size, 256).double()
+    self.slt_attn = SlotAttention(5, self.slot_num, self.slot_size, 64).double()
     
     self.conv = nn.Sequential(
         nn.Conv2d(in_channels=1, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
@@ -27,9 +27,12 @@ class OCCI(nn.Module):
     self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
     self.dec = Decoder(self.im_size, self.slot_size)
 
+    '''
     self.softmax = nn.Softmax(dim=1)
     self.ce_loss = nn.NLLLoss()
-    # self.ce_loss = nn.CrossEntropyLoss()
+    '''
+    
+    self.ce_loss = nn.CrossEntropyLoss()
 
 
   def forward(self, samples):
@@ -40,7 +43,7 @@ class OCCI(nn.Module):
     query_i = einops.rearrange(samples['query_i'][:,None,:,:,:], 'b d i h w->(b i) d h w')
     query_o = samples['query_o']
 
-    breakpoint()
+    
     # shape as [batch_size, slot_size, io_num, flatten_im_size]
     train_i = einops.rearrange(self.conv(train_i.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
     train_o = einops.rearrange(self.conv(train_o.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
@@ -60,18 +63,19 @@ class OCCI(nn.Module):
     for i in range(self.slot_num):
       pred = self.dec.sb_decode(H_update[:,i,:].float())
       pred_out = pred if pred_out is None else torch.add(pred, pred_out)
-      
+    
+    '''
     # cat zero background
     zero_bg = torch.ones(batch_size, 1, self.im_size, self.im_size) * 0.35
     pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
     pred_out = torch.log(pred_out + 1e-20)
+    '''
     
     out_img = pred_out.permute(0,2,3,1).reshape(-1,10)
 
     # calculate Loss of reconstruction
     query_o = query_o.flatten().type(torch.LongTensor)
 
-    # L_rec = self.ce_loss(out_img, query_o)
     L_rec = self.ce_loss(out_img, query_o)
     L_total = L_rec
     
@@ -187,12 +191,11 @@ class Controller(nn.Module):
     self.importn = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.contrib = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
-    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=4)
+    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=4, batch_first=True)
     self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
     
   def forward(self, input, output):
       batch_size = input.shape[0]
-
       slots_i = torch.tensor([])
       slots_o = torch.tensor([])
       for i in range(input.shape[2]):
@@ -219,8 +222,13 @@ class Controller(nn.Module):
       dot = w * h
       # dot = dot.reshape(batch_size, self.slot_num, -1)
       _inst_embed = torch.sum(dot, dim=2)
-      _inst_embed = torch.mean(_inst_embed, dim=1)
-      inst_embed = self.encoder(_inst_embed)
+      inst_embed = torch.tensor([])
+      for i in range(_inst_embed.shape[1]):
+        _inst = _inst_embed[:,i:i+1,:]
+        _inst = self.encoder(_inst)
+        inst_embed = torch.cat((inst_embed, _inst), dim=1)
+        
+      inst_embed = torch.mean(inst_embed, dim=1)
       
       return inst_embed, slots_i, slots_o
 
@@ -285,7 +293,7 @@ class Decoder(nn.Module):
                    nn.Conv2d(in_channels=64, out_channels=64,
                             kernel_size=3, padding=1)]
       self.dec_convs = nn.ModuleList(dec_convs)
-      self.last_conv = nn.Conv2d(in_channels=64, out_channels=9,
+      self.last_conv = nn.Conv2d(in_channels=64, out_channels=10,
                                        kernel_size=3, padding=1)
     
     def sb_decode(self, slots):
@@ -303,3 +311,4 @@ class Decoder(nn.Module):
         out_img = self.last_conv(z)
         
         return out_img
+      

@@ -8,13 +8,13 @@ from model import OCCI
 from torch.utils.tensorboard import SummaryWriter
 
 
-writer = SummaryWriter('./logs/sz32')
+writer = SummaryWriter('./logs/inst')
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
 batch_size = 16
 im_size = 20
-model = OCCI(slot_num=3, slot_size=32, Nc=26, Np=4, use_imagine=False, im_size=im_size)
+model = OCCI(slot_num=3, slot_size=64, Nc=26, Np=4, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 train_step = 0
@@ -92,9 +92,10 @@ for epoch in range(600):
     train_acc = hit_num / tot_num
     writer.add_scalar('acc/train', train_acc, epoch)
         
-    ''' add checkpoint
+    '''
     if epoch % 100 == 99:
-        model_path = Path('./trained_occi_try_{}.pth'.format(int(epoch/50)))
+        model_path = Path('./trained_occi_slsz9_{}.pth'.format(int(epoch/50)))
         torch.save(model.state_dict(), model_path)
     '''
+    
 writer.close()    
