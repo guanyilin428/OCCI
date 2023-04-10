@@ -14,7 +14,12 @@ test_loader = data_load.eval_loader
 
 batch_size = 16
 im_size = 20
-model = OCCI(slot_num=3, slot_size=64, Nc=26, Np=4, use_imagine=False, im_size=im_size)
+num_iterations = 5
+mlp_hidden_size = 64
+Nc = 30
+Np = 4
+slot_size = 16
+model = OCCI(slot_num=3, slot_size=slot_size, Nc=Nc, Np=Np, num_iterations=num_iterations, mlp_hidden_size=mlp_hidden_size, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 train_step = 0
@@ -31,7 +36,7 @@ def evaluate(model):
         for idx, samples in enumerate(test_loader):
             L_test, pred_out  = model(samples)
 
-            tot_L_test += L_test
+            tot_L_test += L_test * samples['query_o'].shape[0]
             
             test_step += 1
             # writer.add_scalar('loss/test', L_test, test_step)
@@ -88,7 +93,7 @@ for epoch in range(600):
         # writer.add_scalar('acc/test', acc, epoch)
         writer.add_scalar('acc/test', acc, train_step)
         writer.add_scalar('loss/test', L_test, train_step)
-        print(f"loss/test: {L_test:>7f}")
+        print(f"loss/test: {L_tot:>7f}")
     train_acc = hit_num / tot_num
     writer.add_scalar('acc/train', train_acc, epoch)
         

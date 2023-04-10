@@ -6,32 +6,34 @@ import torch.nn as nn
 from torch.nn import init
 from torchvision import ops
 import torch.nn.functional as F
+import numpy as np
+from einops import rearrange, repeat
 
 
 class OCCI(nn.Module):
-  def __init__(self, slot_num, slot_size, Nc, Np, use_imagine, im_size):
+  def __init__(self, slot_num, slot_size, Nc, Np, num_iterations, mlp_hidden_size, use_imagine, im_size):
     super().__init__()
+    self.num_iterations = num_iterations
+    self.mlp_hidden_size = mlp_hidden_size
     self.slot_num = slot_num
     self.slot_size = slot_size
     self.Nc = Nc
     self.Np = Np
     self.use_imagine = use_imagine
     self.im_size = im_size
-    self.slt_attn = SlotAttention(5, self.slot_num, self.slot_size, 64).double()
+    self.slt_attn = SlotAttention(self.num_iterations, self.slot_num, self.slot_size, self.mlp_hidden_size).double()
     
     self.conv = nn.Sequential(
         nn.Conv2d(in_channels=1, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
-        nn.ReLU()
+        nn.ReLU(),
+        nn.Conv2d(in_channels=slot_size, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
         )
     self.ctrl = Controller(self.slot_num, self.slot_size, self.slt_attn)
     self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
     self.dec = Decoder(self.im_size, self.slot_size)
 
-    '''
     self.softmax = nn.Softmax(dim=1)
     self.ce_loss = nn.NLLLoss()
-    '''
-    
     self.ce_loss = nn.CrossEntropyLoss()
 
 
@@ -42,7 +44,7 @@ class OCCI(nn.Module):
     train_o = einops.rearrange(samples['output'][:,None,:,:,:], 'b d i h w->(b i) d h w')
     query_i = einops.rearrange(samples['query_i'][:,None,:,:,:], 'b d i h w->(b i) d h w')
     query_o = samples['query_o']
-
+    
     
     # shape as [batch_size, slot_size, io_num, flatten_im_size]
     train_i = einops.rearrange(self.conv(train_i.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
@@ -60,22 +62,24 @@ class OCCI(nn.Module):
 
     # pred_out shape is [b, out_channel, im_size, im_size]
     pred_out = None
-    for i in range(self.slot_num):
-      pred = self.dec.sb_decode(H_update[:,i,:].float())
-      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
+    # H_update = H_update.sum(dim=1)
+    H_update = H_update.reshape(batch_size, -1)
+    pred_out = self.dec.sb_decode(H_update.float())
+#    for i in range(self.slot_num):
+#      pred = self.dec.sb_decode(H_update[:,i,:].float())
+#      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
+#      
+#    # cat zero background
+#    zero_bg = torch.ones(batch_size, 1, self.im_size, self.im_size) * 0.35
+#    pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
+#    pred_out = torch.log(pred_out + 1e-20)
     
-    '''
-    # cat zero background
-    zero_bg = torch.ones(batch_size, 1, self.im_size, self.im_size) * 0.35
-    pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
-    pred_out = torch.log(pred_out + 1e-20)
-    '''
-    
-    out_img = pred_out.permute(0,2,3,1).reshape(-1,10)
+    out_img = pred_out.permute(0,2,3,1).contiguous().reshape(-1,10)
 
     # calculate Loss of reconstruction
     query_o = query_o.flatten().type(torch.LongTensor)
 
+    # L_rec = self.ce_loss(out_img, query_o)
     L_rec = self.ce_loss(out_img, query_o)
     L_total = L_rec
     
@@ -185,9 +189,6 @@ class Controller(nn.Module):
     self.slot_module = slot_module.float()
     self.h_size = 2 * self.slot_size
     
-    # self.importn = ops.MLP(self.h_size * self.slot_num, [self.h_size * self.slot_num], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    # self.contrib = ops.MLP(self.h_size * self.slot_num, [self.h_size * self.slot_num], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    
     self.importn = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.contrib = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
@@ -213,10 +214,6 @@ class Controller(nn.Module):
       slot_pairs = torch.cat((slots_i, slots_o), -1).float()
       w = self.importn(slot_pairs)
       h = self.contrib(slot_pairs)
-      # breakpoint()
-      
-      # w = self.importn(slot_pairs.reshape(batch_size, -1))
-      # h = self.contrib(slot_pairs.reshape(batch_size, -1))
       
       # for batch matrix mul
       dot = w * h
@@ -227,7 +224,7 @@ class Controller(nn.Module):
         _inst = _inst_embed[:,i:i+1,:]
         _inst = self.encoder(_inst)
         inst_embed = torch.cat((inst_embed, _inst), dim=1)
-        
+      
       inst_embed = torch.mean(inst_embed, dim=1)
       
       return inst_embed, slots_i, slots_o
@@ -288,9 +285,9 @@ class Decoder(nn.Module):
       y = torch.linspace(-1, 1, self.im_size)
       self.x_grid, self.y_grid = torch.meshgrid(x, y)
       
-      dec_convs = [nn.Conv2d(in_channels=slot_size+2, out_channels=64,
+      dec_convs = [nn.Conv2d(in_channels=slot_size*3+2, out_channels=slot_size,
                                    kernel_size=3, padding=1),
-                   nn.Conv2d(in_channels=64, out_channels=64,
+                   nn.Conv2d(in_channels=slot_size, out_channels=64,
                             kernel_size=3, padding=1)]
       self.dec_convs = nn.ModuleList(dec_convs)
       self.last_conv = nn.Conv2d(in_channels=64, out_channels=10,
@@ -302,6 +299,13 @@ class Decoder(nn.Module):
         
         # NxDx20x20
         z = z.expand(-1, -1, self.im_size, self.im_size)
+        #print(self.x_grid)
+        #print(self.x_grid.shape)
+        #x = self.x_grid.reshape(self.im_size, self.im_size, 1)
+        #y = self.y_grid.reshape(self.im_size, self.im_size, 1)
+        #xy = np.concatenate((x,y), axis=-1)
+        #xy_tiled = torch.from_numpy(np.tile(xy, (batch_size, 1, 1, 1)).astype(np.float32))
+        #print(xy_tiled.shape)
         
         z = torch.cat((self.x_grid.expand(batch_size, 1, -1, -1),
                        self.y_grid.expand(batch_size, 1, -1, -1), z), dim=1)
