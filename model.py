@@ -21,31 +21,63 @@ class OCCI(nn.Module):
     self.Np = Np
     self.use_imagine = use_imagine
     self.im_size = im_size
-    self.slt_attn = SlotAttention(self.num_iterations, self.slot_num, self.slot_size, self.mlp_hidden_size).double()
+    self.slt_attn = SlotAttention(self.num_iterations, self.slot_num, self.slot_size, self.mlp_hidden_size)
     
+    # slot_attention version
     self.conv = nn.Sequential(
         nn.Conv2d(in_channels=1, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
         nn.ReLU(),
         nn.Conv2d(in_channels=slot_size, out_channels=slot_size, kernel_size=3, stride=1, padding=1),
         )
+    
     self.ctrl = Controller(self.slot_num, self.slot_size, self.slt_attn)
-    self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
+    # self.exec = Executor(self.slot_size * 2, self.Nc, self.Np)
+    # self.dec = Decoder(self.im_size, self.slot_size)
+    
+    # CNN version
+    self.cnn = nn.Sequential(
+        nn.Conv2d(in_channels=1, out_channels=self.mlp_hidden_size, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(),
+        nn.Conv2d(in_channels=self.mlp_hidden_size, out_channels=self.mlp_hidden_size, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(),
+        nn.Conv2d(in_channels=self.mlp_hidden_size, out_channels=self.mlp_hidden_size, kernel_size=3, stride=1, padding=1)
+        )
+    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.mlp_hidden_size*3, nhead=3, batch_first=True)
+    self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
+    
+    self.exec = Executor(self.mlp_hidden_size * 3, self.Nc, self.Np)
     self.dec = Decoder(self.im_size, self.slot_size)
 
     self.softmax = nn.Softmax(dim=1)
-    self.ce_loss = nn.NLLLoss()
     self.ce_loss = nn.CrossEntropyLoss()
 
 
   def forward(self, samples):
     batch_size = samples['input'].shape[0]
     
-    train_i = einops.rearrange(samples['input'][:,None,:,:,:], 'b d i h w->(b i) d h w') 
-    train_o = einops.rearrange(samples['output'][:,None,:,:,:], 'b d i h w->(b i) d h w')
-    query_i = einops.rearrange(samples['query_i'][:,None,:,:,:], 'b d i h w->(b i) d h w')
+    # shape as [batch_size * io_num, 1, 20, 20]
+    train_i = rearrange(samples['input'][:,None,:,:,:], 'b d i h w->(b i) d h w') 
+    train_o = rearrange(samples['output'][:,None,:,:,:], 'b d i h w->(b i) d h w')
+    query_i = rearrange(samples['query_i'][:,None,:,:,:], 'b d i h w->(b i) d h w')
+    # shape as [batch_size, 1, 20, 20]
     query_o = samples['query_o']
     
+    # CNN version
+    diff = torch.sub(train_i, train_o, alpha=1)
+    inp_cnn  = rearrange(self.cnn(train_i), 'bi d h w->bi d (h w)')
+    out_cnn  = rearrange(self.cnn(train_o), 'bi d h w->bi d (h w)')
+    diff_cnn = rearrange(self.cnn(diff), 'bi d h w->bi d (h w)')
+    io_rep = torch.cat((inp_cnn, out_cnn, diff_cnn), dim=1)
+    io_rep = rearrange(io_rep, 'bi d n->bi n d')
     
+    # encoder io_representation in io_pair wise and mean average
+    inst_embed = self.encoder(io_rep)
+    inst_embed = rearrange(inst_embed, '(b i) n d->b i n d', b = batch_size)
+    inst_embed = torch.mean(inst_embed, dim=1)
+    inst_embed = torch.mean(inst_embed, dim=1)
+       
+
+    ''' slot_attention version
     # shape as [batch_size, slot_size, io_num, flatten_im_size]
     train_i = einops.rearrange(self.conv(train_i.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
     train_o = einops.rearrange(self.conv(train_o.float()), '(b i) d h w-> b d i (h w)', b = batch_size)
@@ -53,7 +85,11 @@ class OCCI(nn.Module):
     
     inst_embed, slots_i, slots_o = self.ctrl(train_i, train_o)
     
-    q_i = einops.rearrange(query_i[:,:,0,:], 'b d n->b n d')
+    q_i = rearrange(query_i[:,:,0,:], 'b d n->b n d')
+    H_query = self.slt_attn(q_i)
+    '''
+    
+    q_i = rearrange(self.cnn(query_i), 'bi d h w->bi (h w) d')
     H_query = self.slt_attn(q_i)
     
     c, p = self.exec.selection(inst_embed, get_prob=False)
@@ -63,8 +99,9 @@ class OCCI(nn.Module):
     # pred_out shape is [b, out_channel, im_size, im_size]
     pred_out = None
     # H_update = H_update.sum(dim=1)
+    
     H_update = H_update.reshape(batch_size, -1)
-    pred_out = self.dec.sb_decode(H_update.float())
+    pred_out = self.dec.sb_decode(H_update)
 #    for i in range(self.slot_num):
 #      pred = self.dec.sb_decode(H_update[:,i,:].float())
 #      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
@@ -217,11 +254,11 @@ class Controller(nn.Module):
       
       # for batch matrix mul
       dot = w * h
-      # dot = dot.reshape(batch_size, self.slot_num, -1)
       _inst_embed = torch.sum(dot, dim=2)
       inst_embed = torch.tensor([])
       for i in range(_inst_embed.shape[1]):
         _inst = _inst_embed[:,i:i+1,:]
+        # shape as [b, 1, d]
         _inst = self.encoder(_inst)
         inst_embed = torch.cat((inst_embed, _inst), dim=1)
       
@@ -245,9 +282,12 @@ class Executor(nn.Module):
     self.Kp = torch.randn(self.Np, self.p, requires_grad=True)
     self.Vp = torch.randn(self.Np, self.p, requires_grad=True)
     
+    ''' slt_attention version
     self.pres = ops.MLP(int(self.p * 3/2), [256, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     self.up   = ops.MLP(int(self.p * 3/2), [256, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-
+    '''
+    self.pres = ops.MLP(int(self.p * 4/3), [256, int(self.p * 1/3)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.up   = ops.MLP(int(self.p * 4/3), [256, int(self.p * 1/3)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
   # select nn according to the instruction embedding
   def selection(self, inst_embed, get_prob):
@@ -315,4 +355,4 @@ class Decoder(nn.Module):
         out_img = self.last_conv(z)
         
         return out_img
-      
+   

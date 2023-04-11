@@ -60,8 +60,8 @@ def preprocess(origin_tasks, im_size):
             # inp = inp.flatten()
             # out = out.flatten()
             
-            inp = torch.DoubleTensor(inp)[None,:]
-            out = torch.DoubleTensor(out)[None,:]
+            inp = torch.FloatTensor(inp)[None,:]
+            out = torch.FloatTensor(out)[None,:]
             
             input = torch.cat((input, inp), dim=0)
             output = torch.cat((output, out), dim=0)
@@ -80,8 +80,8 @@ def preprocess(origin_tasks, im_size):
         # query_i = query_i.flatten()
         # query_o = query_o.flatten()
         
-        query_i = torch.DoubleTensor(query_i)[None,:]
-        query_o = torch.DoubleTensor(query_o)[None,:]
+        query_i = torch.FloatTensor(query_i)[None,:]
+        query_o = torch.FloatTensor(query_o)[None,:]
         
         # modified_tasks is a list of dict, each dict represents a task
         modified_tasks.append({'input': input, 'output': output, 'query_i': query_i, 'query_o': query_o})

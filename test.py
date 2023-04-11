@@ -18,7 +18,8 @@ num_iterations = 5
 mlp_hidden_size = 64
 Nc = 30
 Np = 4
-slot_size = 16
+slot_size = 64
+# in CNN version, the slot size has to be equal to hid_dim
 model = OCCI(slot_num=3, slot_size=slot_size, Nc=Nc, Np=Np, num_iterations=num_iterations, mlp_hidden_size=mlp_hidden_size, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
