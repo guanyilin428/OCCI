@@ -47,7 +47,7 @@ def evaluate(model):
         for idx, samples in enumerate(test_loader):
             samples = {k: v.cuda() for k, v in samples.items()}
             # L_test, pred_out  = model(samples)
-            L_test, pred_out, H_update  = model(samples)
+            L_test, pred_out, alpha = model(samples)
             
 
             tot_L_test += L_test * samples['query_o'].shape[0]
@@ -94,9 +94,9 @@ for epoch in range(1000):
 
 
         batched_samples = {k: v.cuda() for k, v in batched_samples.items()}
-        L_tot, pred_out, H_update = model(batched_samples)
+        L_tot, pred_out, alpha = model(batched_samples)
         if batch_idx % 100 == 0:
-            print(H_update[0])
+            print(alpha[0])
         # L_tot, pred_out = model(batched_samples)
         
         

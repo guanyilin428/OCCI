@@ -113,7 +113,7 @@ class OCCI(nn.Module):
     
     c, p = self.exec.selection(inst_embed, get_prob=False)
     # H_update is of shape [batch_size, num_slot, slot_size]
-    H_update = self.exec.update(H_query, c, p)
+    H_update, alpha = self.exec.update(H_query, c, p)
 
     # pred_out shape is [b, out_channel, im_size, im_size]
     # pred_out = None
@@ -160,7 +160,7 @@ class OCCI(nn.Module):
 
       L_total = L_im + L_rec
       
-    return L_total, pred_out, H_update
+    return L_total, pred_out, alpha
 
 
 class SlotAttention(nn.Module):
@@ -332,7 +332,8 @@ class Executor(nn.Module):
     H = slots
     Hc = torch.cat((slots, c), dim=-1)
     Hp = torch.cat((slots, p), dim=-1)
-    H_new = H + F.sigmoid(self.pres(Hc)) * self.up(Hp)
+    alpha = F.sigmoid(self.pres(Hc))
+    H_new = H + alpha * self.up(Hp)
 #    for k in range(slots.size(dim=1)):
 #      h = slots[:,k,:]
 #      hc = torch.cat((h, c), dim=-1)
@@ -341,7 +342,7 @@ class Executor(nn.Module):
 #      h_new = h + F.sigmoid(self.pres(hc.float())) * self.up(hp.float())
 #      H_new.append(h_new)
 #      H_new = torch.cat((H_new, h_new[:,None,:]), dim=1)
-    return H_new
+    return H_new, alpha
 
 
 class Decoder(nn.Module):
