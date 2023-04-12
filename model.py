@@ -44,7 +44,7 @@ class OCCI(nn.Module):
         nn.Conv2d(in_channels=self.mlp_hidden_size, out_channels=self.mlp_hidden_size, kernel_size=3, stride=1, padding=1)
         )
     self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.mlp_hidden_size*3, nhead=1, batch_first=True)
-    self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
+    self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=1)
     self.inst_fc = nn.Linear(self.mlp_hidden_size*3, self.mlp_hidden_size)
     
     self.exec = Executor(self.mlp_hidden_size, self.Nc, self.Np)
@@ -62,9 +62,10 @@ class OCCI(nn.Module):
     #train_o = rearrange(samples['output'], 'b i h w->(b i) 1 h w')
     #query_i = rearrange(samples['query_i'], 'b i h w->(b i) 1 h w')
     # shape as [batch_size, 1, 20, 20]
-    print(samples['input'].shape)
-    print(samples['output'].shape)
-    print(samples['query_i'].shape)
+    # print(samples['input'].shape)
+    # print(samples['output'].shape)
+    # print(samples['query_i'].device)
+    # print(samples['query_o'].device)
     train_i = F.one_hot(samples['input'].long(), 10).float()
     train_o = F.one_hot(samples['output'].long(), 10).float()
     query_i = F.one_hot(samples['query_i'].long(), 10).float()
@@ -72,10 +73,10 @@ class OCCI(nn.Module):
     train_o = rearrange(train_o, 'b i h w c->(b i) c h w')
     query_i = rearrange(query_i, 'b i h w c->(b i) c h w')
     query_o = samples['query_o']
-    print('train_i', train_i.shape)
-    print('train_o', train_o.shape)
-    print('query_i', query_i.shape)
-    print('query_o', query_o.shape)
+    # print('train_i', train_i.shape)
+    # print('train_o', train_o.shape)
+    # print('query_i', query_i.shape)
+    # print('query_o', query_o.shape)
     
     # CNN version
     # diff = torch.sub(train_i, train_o, alpha=1)
@@ -106,20 +107,20 @@ class OCCI(nn.Module):
     q_i = rearrange(query_i[:,:,0,:], 'b d n->b n d')
     H_query = self.slt_attn(q_i)
     '''
-    print('q_i', q_i.shape)
+    # print('q_i', q_i.shape)
     H_query = self.slt_attn(q_i)
-    print(H_query.shape)
+    # print(H_query.shape)
     
     c, p = self.exec.selection(inst_embed, get_prob=False)
     # H_update is of shape [batch_size, num_slot, slot_size]
     H_update = self.exec.update(H_query, c, p)
 
     # pred_out shape is [b, out_channel, im_size, im_size]
-    pred_out = None
+    # pred_out = None
     # H_update = H_update.sum(dim=1)
-    
-    H_update = H_update.reshape(batch_size, -1)
-    pred_out = self.dec.sb_decode(H_update)
+
+    H_update_sum = H_update.sum(dim=1)
+    pred_out = self.dec.sb_decode(H_update_sum)
 #    for i in range(self.slot_num):
 #      pred = self.dec.sb_decode(H_update[:,i,:].float())
 #      pred_out = pred if pred_out is None else torch.add(pred, pred_out)
@@ -129,7 +130,7 @@ class OCCI(nn.Module):
 #    pred_out = torch.cat((zero_bg, self.softmax(pred_out)*0.65), dim=1)  
 #    pred_out = torch.log(pred_out + 1e-20)
     
-    print(pred_out.shape)
+    # print(pred_out.shape)
     out_img = rearrange(pred_out, 'b c h w->(b h w) c')
     query_o = rearrange(query_o, 'b i h w->(b i h w)', i=1).long()
 
@@ -159,7 +160,7 @@ class OCCI(nn.Module):
 
       L_total = L_im + L_rec
       
-    return L_total, pred_out
+    return L_total, pred_out, H_update
 
 
 class SlotAttention(nn.Module):
@@ -227,6 +228,162 @@ class SlotAttention(nn.Module):
             slots = slots + self.mlp(self.norm_pre_ff(slots))
 
         return slots
+
+
+class Controller(nn.Module):
+  def __init__(self, slot_num, slot_size, slot_module):
+    super().__init__()
+    self.slot_num = slot_num
+    self.slot_size = slot_size
+    self.slot_module = slot_module.float()
+    self.h_size = 2 * self.slot_size
+    
+    self.importn = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.contrib = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    
+    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=4, batch_first=True)
+    self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
+    
+  def forward(self, input, output):
+      batch_size = input.shape[0]
+      slots_i = torch.tensor([])
+      slots_o = torch.tensor([])
+      for i in range(input.shape[2]):
+        inp = einops.rearrange(input[:,:,i,:], 'b d n->b n d')
+        out = einops.rearrange(output[:,:,i,:], 'b d n->b n d')
+        
+        s_i = self.slot_module(inp.float())
+        s_o = self.slot_module(out.float())
+        # slots shape is [batch_size, io_num, num_slot, slot_size]
+        slots_i = torch.cat((slots_i, s_i[:,None,:,:]), dim=1)
+        slots_o = torch.cat((slots_o, s_o[:,None,:,:]), dim=1)
+       
+      # concatenate io slots for MLP
+      # shape of [batch_size, num_io, num_slot, 2*slot_size]
+      slot_pairs = torch.cat((slots_i, slots_o), -1).float()
+      w = self.importn(slot_pairs)
+      h = self.contrib(slot_pairs)
+      
+      # for batch matrix mul
+      dot = w * h
+      _inst_embed = torch.sum(dot, dim=2)
+      inst_embed = torch.tensor([])
+      for i in range(_inst_embed.shape[1]):
+        _inst = _inst_embed[:,i:i+1,:]
+        # shape as [b, 1, d]
+        _inst = self.encoder(_inst)
+        inst_embed = torch.cat((inst_embed, _inst), dim=1)
+      
+      inst_embed = torch.mean(inst_embed, dim=1)
+      
+      return inst_embed, slots_i, slots_o
+
+
+class Executor(nn.Module):
+  def __init__(self, p, Nc, Np):
+    super().__init__()
+    self.p = p
+    self.fc = ops.MLP(self.p, [self.p, self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.fp = ops.MLP(self.p, [self.p, self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    
+    self.scale = math.sqrt(self.p)
+    self.Nc = Nc
+    self.Np = Np
+#    self.Kc = torch.randn(self.Nc, self.p, requires_grad=True)
+#    self.Vc = torch.randn(self.Nc, self.p, requires_grad=True)
+#    self.Kp = torch.randn(self.Np, self.p, requires_grad=True)
+#    self.Vp = torch.randn(self.Np, self.p, requires_grad=True)
+    self.Kc = nn.Parameter(torch.randn(self.Nc, self.p))
+    self.Vc = nn.Parameter(torch.randn(self.Nc, self.p))
+    self.Kp = nn.Parameter(torch.randn(self.Np, self.p))
+    self.Vp = nn.Parameter(torch.randn(self.Np, self.p))
+    
+    ''' slt_attention version
+    self.pres = ops.MLP(int(self.p * 3/2), [256, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.up   = ops.MLP(int(self.p * 3/2), [256, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    '''
+    # self.pres = ops.MLP(int(self.p * 4/3), [256, int(self.p * 1/3)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    # self.up   = ops.MLP(int(self.p * 4/3), [256, int(self.p * 1/3)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.pres = ops.MLP(int(self.p * 2), [64, 1], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.up   = ops.MLP(int(self.p * 2), [256, int(self.p)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    
+  # select nn according to the instruction embedding
+  def selection(self, inst_embed, get_prob):
+    # print('inst_embed', inst_embed.shape)
+    Qc = self.fc(inst_embed)
+    Qp = self.fp(inst_embed)
+    
+    c_prob = torch.einsum('bi, ci->bc', Qc, self.Kc) / self.scale
+    p_prob = torch.einsum('bi, pi->bp', Qp, self.Kp) / self.scale
+    c = torch.einsum('bc,ci->bi', F.softmax(c_prob, dim=-1), self.Vc)
+    p = torch.einsum('bp,pi->bi', F.softmax(p_prob, dim=-1), self.Vp)
+    
+    if get_prob:
+      return c_prob, p_prob
+    else: return c, p
+  
+  def update(self, slots, c, p):
+    # H_new = torch.tensor([])
+    # fn_sig = nn.Sigmoid()
+    # print(slots.shape)
+    # print(c.shape)
+    c = repeat(c, 'b d -> b n d', n=slots.size(dim=1))
+    p = repeat(p, 'b d -> b n d', n=slots.size(dim=1))
+    H = slots
+    Hc = torch.cat((slots, c), dim=-1)
+    Hp = torch.cat((slots, p), dim=-1)
+    H_new = H + F.sigmoid(self.pres(Hc)) * self.up(Hp)
+#    for k in range(slots.size(dim=1)):
+#      h = slots[:,k,:]
+#      hc = torch.cat((h, c), dim=-1)
+#      hp = torch.cat((h, p), dim=-1)
+#      # h_new = h + fn_sig(self.pres(hc.float())) * self.up(hp.float())
+#      h_new = h + F.sigmoid(self.pres(hc.float())) * self.up(hp.float())
+#      H_new.append(h_new)
+#      H_new = torch.cat((H_new, h_new[:,None,:]), dim=1)
+    return H_new
+
+
+class Decoder(nn.Module):
+    def __init__(self, im_size, slot_size):
+      super().__init__()
+            # Coordinates for the broadcast decoder
+      self.im_size = im_size
+      x = torch.linspace(-1, 1, im_size)
+      y = torch.linspace(-1, 1, im_size)
+      x_grid, y_grid = torch.meshgrid(x, y)
+      # Add as constant, with extra dims for N and C
+      self.register_buffer('x_grid', x_grid.view((1, 1) + x_grid.shape))
+      self.register_buffer('y_grid', y_grid.view((1, 1) + y_grid.shape))
+
+      dec_convs = [nn.Conv2d(in_channels=slot_size + 2, out_channels=slot_size,
+                                   kernel_size=3, padding=1),
+                   nn.Conv2d(in_channels=slot_size, out_channels=64,
+                            kernel_size=3, padding=1)]
+      self.dec_convs = nn.ModuleList(dec_convs)
+      self.last_conv = nn.Conv2d(in_channels=64, out_channels=10,
+                                       kernel_size=3, padding=1)
+    def sb_decode(self, z):
+        batch_size = z.size(0)
+        # View z as 4D tensor to be tiled across new H and W dimensions
+        # Shape: NxDx1x1
+        z = z.view(z.shape + (1, 1))
+
+        # Tile across to match image size
+        # Shape: NxDx64x64
+        z = z.expand(-1, -1, self.im_size, self.im_size)
+
+        # Expand grids to batches and concatenate on the channel dimension
+        # Shape: Nx(D+2)x64x64
+        x = torch.cat((self.x_grid.expand(batch_size, -1, -1, -1),
+                       self.y_grid.expand(batch_size, -1, -1, -1), z), dim=1)
+
+        for module in self.dec_convs:
+            x = F.relu(module(x))
+        x = self.last_conv(x)
+        
+        return x
+   
 #class SlotAttention(nn.Module):
 #  """Slot Attention module."""
 #
@@ -301,144 +458,3 @@ class SlotAttention(nn.Module):
 #        slots = slots + self.mlp(self.norm_pre_ff(slots))
 #
 #    return slots
-
-
-class Controller(nn.Module):
-  def __init__(self, slot_num, slot_size, slot_module):
-    super().__init__()
-    self.slot_num = slot_num
-    self.slot_size = slot_size
-    self.slot_module = slot_module.float()
-    self.h_size = 2 * self.slot_size
-    
-    self.importn = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    self.contrib = ops.MLP(self.h_size, [self.h_size], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    
-    self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.slot_size*2, nhead=4, batch_first=True)
-    self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
-    
-  def forward(self, input, output):
-      batch_size = input.shape[0]
-      slots_i = torch.tensor([])
-      slots_o = torch.tensor([])
-      for i in range(input.shape[2]):
-        inp = einops.rearrange(input[:,:,i,:], 'b d n->b n d')
-        out = einops.rearrange(output[:,:,i,:], 'b d n->b n d')
-        
-        s_i = self.slot_module(inp.float())
-        s_o = self.slot_module(out.float())
-        # slots shape is [batch_size, io_num, num_slot, slot_size]
-        slots_i = torch.cat((slots_i, s_i[:,None,:,:]), dim=1)
-        slots_o = torch.cat((slots_o, s_o[:,None,:,:]), dim=1)
-       
-      # concatenate io slots for MLP
-      # shape of [batch_size, num_io, num_slot, 2*slot_size]
-      slot_pairs = torch.cat((slots_i, slots_o), -1).float()
-      w = self.importn(slot_pairs)
-      h = self.contrib(slot_pairs)
-      
-      # for batch matrix mul
-      dot = w * h
-      _inst_embed = torch.sum(dot, dim=2)
-      inst_embed = torch.tensor([])
-      for i in range(_inst_embed.shape[1]):
-        _inst = _inst_embed[:,i:i+1,:]
-        # shape as [b, 1, d]
-        _inst = self.encoder(_inst)
-        inst_embed = torch.cat((inst_embed, _inst), dim=1)
-      
-      inst_embed = torch.mean(inst_embed, dim=1)
-      
-      return inst_embed, slots_i, slots_o
-
-
-class Executor(nn.Module):
-  def __init__(self, p, Nc, Np):
-    super().__init__()
-    self.p = p
-    self.fc = ops.MLP(self.p, [self.p, self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    self.fp = ops.MLP(self.p, [self.p, self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    
-    self.scale = math.sqrt(self.p)
-    self.Nc = Nc
-    self.Np = Np
-    self.Kc = torch.randn(self.Nc, self.p, requires_grad=True)
-    self.Vc = torch.randn(self.Nc, self.p, requires_grad=True)
-    self.Kp = torch.randn(self.Np, self.p, requires_grad=True)
-    self.Vp = torch.randn(self.Np, self.p, requires_grad=True)
-    
-    ''' slt_attention version
-    self.pres = ops.MLP(int(self.p * 3/2), [256, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    self.up   = ops.MLP(int(self.p * 3/2), [256, int(self.p * 1/2)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    '''
-    self.pres = ops.MLP(int(self.p * 4/3), [256, int(self.p * 1/3)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    self.up   = ops.MLP(int(self.p * 4/3), [256, int(self.p * 1/3)], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    
-  # select nn according to the instruction embedding
-  def selection(self, inst_embed, get_prob):
-    print('inst_embed', inst_embed.shape)
-    Qc = self.fc(inst_embed)
-    Qp = self.fp(inst_embed)
-    
-    c_prob = torch.einsum('bi, ci->bc', Qc, self.Kc) / self.scale
-    p_prob = torch.einsum('bi, pi->bp', Qp, self.Kp) / self.scale
-    c = torch.einsum('bc,ci->bi', F.softmax(c_prob, dim=-1), self.Vc)
-    p = torch.einsum('bp,pi->bi', F.softmax(p_prob, dim=-1), self.Vp)
-    
-    if get_prob:
-      return c_prob, p_prob
-    else: return c, p
-  
-  def update(self, slots, c, p):
-    H_new = torch.tensor([])
-    # fn_sig = nn.Sigmoid()
-    for k in range(slots.size(dim=1)):
-      h = slots[:,k,:]
-      hc = torch.cat((h, c), dim=-1)
-      hp = torch.cat((h, p), dim=-1)
-      # h_new = h + fn_sig(self.pres(hc.float())) * self.up(hp.float())
-      h_new = h + self.pres(hc.float()) * self.up(hp.float())
-      H_new = torch.cat((H_new, h_new[:,None,:]), dim=1)
-    return H_new
-
-
-class Decoder(nn.Module):
-    def __init__(self, im_size, slot_size):
-      super().__init__()
-      self.im_size = im_size
-      
-      x = torch.linspace(-1, 1, self.im_size)
-      y = torch.linspace(-1, 1, self.im_size)
-      self.x_grid, self.y_grid = torch.meshgrid(x, y)
-      
-      dec_convs = [nn.Conv2d(in_channels=slot_size*3+2, out_channels=slot_size,
-                                   kernel_size=3, padding=1),
-                   nn.Conv2d(in_channels=slot_size, out_channels=64,
-                            kernel_size=3, padding=1)]
-      self.dec_convs = nn.ModuleList(dec_convs)
-      self.last_conv = nn.Conv2d(in_channels=64, out_channels=10,
-                                       kernel_size=3, padding=1)
-    
-    def sb_decode(self, slots):
-        batch_size = slots.shape[0]
-        z = slots.view(slots.shape + (1, 1))
-        
-        # NxDx20x20
-        z = z.expand(-1, -1, self.im_size, self.im_size)
-        #print(self.x_grid)
-        #print(self.x_grid.shape)
-        #x = self.x_grid.reshape(self.im_size, self.im_size, 1)
-        #y = self.y_grid.reshape(self.im_size, self.im_size, 1)
-        #xy = np.concatenate((x,y), axis=-1)
-        #xy_tiled = torch.from_numpy(np.tile(xy, (batch_size, 1, 1, 1)).astype(np.float32))
-        #print(xy_tiled.shape)
-        
-        z = torch.cat((self.x_grid.expand(batch_size, 1, -1, -1),
-                       self.y_grid.expand(batch_size, 1, -1, -1), z), dim=1)
-
-        for module in self.dec_convs:
-            z = F.relu(module(z))
-        out_img = self.last_conv(z)
-        
-        return out_img
-   
