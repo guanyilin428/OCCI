@@ -11,8 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 # train_path = data_path / 'training'
 # eval_path  = data_path / 'evaluation'
 
-train_path = Path('new/train')
-eval_path = Path('new/test')
+train_path = Path('img/train')
+eval_path = Path('img/test')
 
 train_tasks = {task.stem: json.load(task.open()) for task in train_path.iterdir()}
 eval_tasks = {task.stem: json.load(task.open()) for task in eval_path.iterdir()}

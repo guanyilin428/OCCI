@@ -8,7 +8,7 @@ from model import OCCI
 from torch.utils.tensorboard import SummaryWriter
 
 
-writer = SummaryWriter('./logs/inst')
+writer = SummaryWriter('./logs/new_data')
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
@@ -20,7 +20,10 @@ Nc = 30
 Np = 4
 slot_size = 64
 # in CNN version, the slot size has to be equal to hid_dim
-model = OCCI(slot_num=3, slot_size=slot_size, Nc=Nc, Np=Np, num_iterations=num_iterations, mlp_hidden_size=mlp_hidden_size, use_imagine=False, im_size=im_size)
+model = OCCI(slot_num=3, slot_size=slot_size, Nc=Nc, Np=Np, num_iterations=num_iterations,\
+    mlp_hidden_size=mlp_hidden_size, use_imagine=False, im_size=im_size).to(torch.device("cuda"))
+# model = OCCI(slot_num=3, slot_size=slot_size, Nc=Nc, Np=Np, num_iterations=num_iterations,\
+#     mlp_hidden_size=mlp_hidden_size, use_imagine=False, im_size=im_size)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 train_step = 0
@@ -35,7 +38,9 @@ def evaluate(model):
         hit_num = 0
         tot_L_test = torch.tensor(0.0) 
         for idx, samples in enumerate(test_loader):
-            L_test, pred_out  = model(samples)
+            # L_test, pred_out  = model(samples)
+            L_test, pred_out  = model(samples.to(torch.device("cuda")))
+            
 
             tot_L_test += L_test * samples['query_o'].shape[0]
             
@@ -61,7 +66,7 @@ def evaluate(model):
     return acc, L_test
 
 
-for epoch in range(600):
+for epoch in range(1000):
     print('Epoch {:d}'.format(epoch + 1))
     # if epoch == 200:
     #   optimizer.lr = 0.0001
@@ -70,7 +75,9 @@ for epoch in range(600):
     hit_num = 0
     
     for batch_idx, batched_samples in enumerate(train_loader):
-        L_tot, pred_out = model(batched_samples)
+        L_tot, pred_out = model(batched_samples.to(torch.device("cuda")))
+        # L_tot, pred_out = model(batched_samples)
+        
         
         optimizer.zero_grad()
         L_tot.backward()

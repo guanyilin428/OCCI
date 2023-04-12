@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH -J occi-inst              # The job name
-#SBATCH -o ret_inst.out           # Write the standard output to file named 'ret.out'
-#SBATCH -e ret_inst.err           # Write the standard error to file named 'ret.err'
+#SBATCH -J occi-newdata              # The job name
+#SBATCH -o ret_newdata.out           # Write the standard output to file named 'ret.out'
+#SBATCH -e ret_newdata.err           # Write the standard error to file named 'ret.err'
 
 #- Resources
 
