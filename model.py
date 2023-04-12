@@ -356,8 +356,8 @@ class Executor(nn.Module):
   def __init__(self, p, Nc, Np):
     super().__init__()
     self.p = p
-    self.fc = ops.MLP(self.p, [self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
-    self.fp = ops.MLP(self.p, [self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.fc = ops.MLP(self.p, [self.p, self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
+    self.fp = ops.MLP(self.p, [self.p, self.p], norm_layer=nn.LayerNorm, activation_layer=nn.ReLU)
     
     self.scale = math.sqrt(self.p)
     self.Nc = Nc
