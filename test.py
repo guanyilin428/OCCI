@@ -14,9 +14,9 @@ test_loader = data_load.eval_loader
 
 batch_size = 16
 im_size = 20
-num_iterations = 5
+num_iterations = 3
 mlp_hidden_size = 64
-Nc = 30
+Nc = 32
 Np = 4
 slot_size = 64
 # in CNN version, the slot size has to be equal to hid_dim
