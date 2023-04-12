@@ -158,13 +158,13 @@ class SortOfARC:
         return new_image
            
 
-train_path = Path('img/train')
-test_path = Path('img/test')
-task_num = 1100
+train_path = Path('limg/train')
+test_path = Path('limg/test')
+task_num = 11000
 sarc = SortOfARC()
 for task_id in range(task_num):
-    path = train_path if task_id < 1000 else test_path
-    t_id = task_id % 1000
+    path = train_path if task_id < 10000 else test_path
+    t_id = task_id % 10000
     f = open(os.path.join(path, str(t_id)+'.json'), 'w')
     inp, out, qi, qo, cond, tranf = sarc.generate_episode()
     f.write('{"train": [')

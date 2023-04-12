@@ -1,16 +1,16 @@
 #!/bin/bash
 
-#SBATCH -J occi-newdata              # The job name
-#SBATCH -o ret_newdata.out           # Write the standard output to file named 'ret.out'
-#SBATCH -e ret_newdata.err           # Write the standard error to file named 'ret.err'
+#SBATCH -J occi-large              # The job name
+#SBATCH -o ret_large.out           # Write the standard output to file named 'ret.out'
+#SBATCH -e ret_large.err           # Write the standard error to file named 'ret.err'
 
 #- Resources
 
-#SBATCH -t 1-23:59:00                # Run for a maximum time of 1 days, 20 hours, 00 mins, 00 secs
+#SBATCH -t 4-23:59:00                # Run for a maximum time of 1 days, 20 hours, 00 mins, 00 secs
 #SBATCH --nodes=1                    # Request N nodes
 #SBATCH --gres=gpu:4                 # Request M GPU per node
 #SBATCH --gres-flags=enforce-binding # CPU-GPU Affinity
-#SBATCH --qos=gpu-long               # Request QOS Type
+#SBATCH --qos=gpu-longlong           # Request QOS Type
 #SBATCH --exclude=gpu-v02,gpu-v07,gpu-t12,gpu-t13
 
 

@@ -8,11 +8,11 @@ from model import OCCI
 from torch.utils.tensorboard import SummaryWriter
 
 
-writer = SummaryWriter('./logs/new_data')
+writer = SummaryWriter('./logs/large_data')
 train_loader = data_load.data_loader
 test_loader = data_load.eval_loader
 
-batch_size = 16
+batch_size = 64
 im_size = 20
 num_iterations = 3
 mlp_hidden_size = 64

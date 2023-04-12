@@ -11,8 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 # train_path = data_path / 'training'
 # eval_path  = data_path / 'evaluation'
 
-train_path = Path('img/train')
-eval_path = Path('img/test')
+train_path = Path('limg/train')
+eval_path = Path('limg/test')
 
 train_tasks = {task.stem: json.load(task.open()) for task in train_path.iterdir()}
 eval_tasks = {task.stem: json.load(task.open()) for task in eval_path.iterdir()}
@@ -102,7 +102,7 @@ class ArcDataset(Dataset):
         return sample
 
 train_dataset = ArcDataset(preprocess(train_tasks, im_size))
-data_loader = DataLoader(train_dataset, batch_size = 16, shuffle = True, drop_last = False)
+data_loader = DataLoader(train_dataset, batch_size = 64, shuffle = True, drop_last = False)
 
 eval_dataset = ArcDataset(preprocess(eval_tasks, im_size))
-eval_loader = DataLoader(eval_dataset, batch_size = 16, shuffle = False, drop_last = False)
+eval_loader = DataLoader(eval_dataset, batch_size = 64, shuffle = False, drop_last = False)
