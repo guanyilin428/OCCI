@@ -24,17 +24,18 @@ class SortOfARC:
                         }
 
         self.colors = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        # 0~9 color, 10~25 shape
+        self.cond_range = len(self.shapes) + len(self.colors)
         self.color_map = ['black', 'red', 'green', 'blue', 'yellow', 'purple', 'pink', 'olive', 'cyan', 'brown', 'gray']
         self.background_color = 0
         self.image_size = 20
         self.object_size = 3
         self.num_objects = 3
         self.support_size = 5
-        
+
     def generate_episode(self):
-        condition = {}
-        condition['shape'] = random.randint(0, len(self.shapes)-1)
-        condition['color'] = random.choice(self.colors[1:])
+        
+        condition = random.randint(0, self.cond_range-1)
         
         transformation = random.choice(['left', 'right', 'up', 'down'])
         input_images, output_images = [], []
@@ -57,19 +58,32 @@ class SortOfARC:
     def generate_image(self, cond):
         objects = []
         positions = self.generate_positions()
-
+        
+        is_shape = False
+        is_color = False
+        if cond < 10:
+            is_color = True
+        else: 
+            is_shape = True
+            cond -= 10
+            
         ''' make sure at least one object corresponds to the condition'''
         hit = False
         for i in range(self.num_objects):
             shape = random.randint(0, len(self.shapes)-1)
             color = random.choice(self.colors[1:])
-            if shape == cond['shape'] and color == cond['color']:
+            if (is_shape and shape == cond) or (is_color and color == cond):
                 hit = True
             position = positions[i]
             objects.append((shape, color, position))
         if not hit:
             objects = objects[:-1]
-            objects.append((cond['shape'], cond['color'], positions[-1]))
+            if is_color:
+                shape = random.randint(0, len(self.shapes)-1)
+                objects.append((shape, cond, positions[-1]))
+            elif is_shape:
+                color = random.choice(self.colors[1:])
+                objects.append((cond, color, positions[-1])  )              
 
         image = np.zeros((self.image_size, self.image_size), dtype=np.int32)
         for shape, color, position in objects:
@@ -101,11 +115,19 @@ class SortOfARC:
         return True
 
     def apply_transformation(self, objects, transformation, cond):
+        is_shape = False
+        is_color = False
+        if cond < 10:
+            is_color = True
+        else: 
+            is_shape = True
+            cond -= 10
+        
         positions = []
         for i in range(len(objects)):
             shape, color, pos = objects[i]
             positions.append(pos)
-            if shape == cond['shape'] and color == cond['color']:  
+            if (is_shape and shape == cond) or (is_color and color == cond):            
                 if transformation == 'left':
                     new_pos = (pos[0], pos[1]-1)
                 elif transformation == 'right':
@@ -136,11 +158,14 @@ class SortOfARC:
         return new_image
            
 
-dir_path = Path('img')
-task_num = 1000
+train_path = Path('img/train')
+test_path = Path('img/test')
+task_num = 1100
 sarc = SortOfARC()
 for task_id in range(task_num):
-    f = open(os.path.join(dir_path, str(task_id)+'.json'), 'w')
+    path = train_path if task_id < 1000 else test_path
+    t_id = task_id % 1000
+    f = open(os.path.join(path, str(t_id)+'.json'), 'w')
     inp, out, qi, qo, cond, tranf = sarc.generate_episode()
     f.write('{"train": [')
     for i in range(len(inp)):
